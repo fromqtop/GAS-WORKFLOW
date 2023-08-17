@@ -1,0 +1,609 @@
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/quasar@2.12.0/dist/quasar.umd.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/quasar@2.12.0/dist/lang/ja.umd.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/quasar@2.12.0/dist/icon-set/material-icons-outlined.umd.prod.js"></script>
+<script>
+  const app = Vue.createApp({
+    data () {
+      return {
+        // スプレッドシートデータ
+        loginUser: {},
+        users: [],
+        forms: [],
+        applications: [],
+        groups: [],
+        levels: [],
+        // コンポーネント用
+        drawer: true,                     // レフトドロワーの表示・非表示
+        selectedApplicantGroupId: null,   // ワークフロー部署セレクトボックス
+        inputComment: '',                 // コメント欄
+
+        params: {
+          menu: 'apply',              // apply, review, search
+          tab_apply: 'new',           // new, drafts, applied
+          tab_review: 'inReview',     // inReview, reviewed, lookIn
+          tab_appDetails: 'contents', // contents, workflow, history
+          app_fid: null,
+          app_rid: null,
+        },
+        pageNames: ['apply', 'review', 'search', 'appDetails'],
+        page: 'apply',
+
+        pickedForm: null,
+        // pickedAppKey: { formId: null, responseId: null },
+        // pickedDraftIndex: null,
+        dialogs: {
+          goForm: false,
+          apply: false,
+          reject: false,
+          approve: false,
+        },
+        loading: true,  // 初期データ読み込み中
+      }
+    },
+    mounted() {
+      // ウェブアプリアクセス時の処理
+      google.script.url.getLocation(location => {
+        this.switchPage(location.hash, location.parameter, false);
+      });
+      
+      // ブラウザバック・フォワード時の処理
+      google.script.history.setChangeHandler(e => {
+        this.switchPage(e.location.hash, location.parameter, false);
+      });
+
+      google.script.run.withSuccessHandler((result) => {
+        const initialData = JSON.parse(result);
+        this.loginUser = initialData.loginUser;
+        this.users = initialData.users;
+        this.groups = initialData.groups;
+        this.forms = initialData.forms;
+        this.levels = initialData.levels;
+        this.applications = initialData.applications;
+        this.selectedApplicantGroupId = this.loginUser.roles[0].id;
+        this.loading = false;
+      }).getInitialData();
+    },
+    computed: {
+      // Web用に加工したApplications
+      apps() {
+        return this.applications.map((app) => {
+          // detailsを除いたオブジェクト newApp を作成
+          const newApp = { ...app };
+          // newAppに情報を追加する
+          newApp.formTitle = this.getFormById(app.formId).title;                        // フォーム名
+          newApp.applicantName = this.getUserByEmail(app.applicantEmail).name;          // 申請者名
+          if (app.applicantGroupId) {
+            newApp.applicantGroupName = this.getGroupById(app.applicantGroupId).name;   // 申請者グループ名
+          }
+          newApp.applyDateTimeString = (() => {
+            const applyLog = app.logs.find(log => !log.revoked && log.action === 'apply');
+            return applyLog ? this.getDateTimeString(new Date(applyLog.timeStamp)) : '';
+          })();                                                                         // 申請日時
+          newApp.caption = this.getCaption(app.details);                                // キャプション
+          newApp.statusColor = this.getStatusColor(app.status);                         // ステータスバッジ色
+          newApp.currentStepIndex = this.getCurrentStepIndex(app.steps, app.logs);      // 現在のSTEPのインデックス
+          if (newApp.currentStepIndex >= 0) {
+            newApp.currentStep = app.steps[newApp.currentStepIndex];                    // 現在のSTEP
+          }
+          // テスト中
+          newApp.reviewable = this.isReviewableApp(newApp);          
+          return newApp;
+        });
+      },
+      // ログインユーザー情報
+      user() {
+        if (this.loading) return {};
+        const { roles, ...user } = this.loginUser;
+        user.roles = roles.map((role) => {
+          return {
+            ...role,
+            groupName: this.getGroupById(role.groupId).name,
+            levelName: this.getLevelByValue(role.level).name
+          }
+        })
+        return user;
+      },
+
+      // 下書きの申請一覧
+      draftApps() {
+        return this.apps.filter(app => 
+          app.applicantEmail === this.loginUser.email &&
+          app.status === '下書き'
+        );
+      },
+      // 申請済の申請一覧
+      inReviewApps() {
+        return this.apps.filter(app =>
+          app.applicantEmail === this.loginUser.email &&
+          app.status !== '下書き'
+        );
+      },
+
+      // 未レビューの申請一覧
+      reviewableApps() {
+        return this.apps.filter(app => this.isReviewableApp(app));
+      },
+      // レビュー済の申請一覧
+      reviewedApps() {
+        return this.apps.filter(app => this.isReviewedApp(app));
+      },
+      // 事前閲覧できる申請一覧
+      viewableApps() {
+        return this.apps.filter(app => this.isViewableApp(app));
+      },
+
+      // 選択されている申請データ
+      pickedApp() {
+        // const app = this.getAppById(this.pickedAppKey.formId, this.pickedAppKey.responseId);
+        const app = this.getAppById(this.params.app_fid, this.params.app_rid);
+        console.log(this.params.app_fid)
+        console.log(this.params.app_rid)
+        console.log(app)
+        if (!app) return {};
+        const { details, logs, comments, ...newApp } = app;
+        newApp.details = this.getProcessedDetails(details);     // 申請詳細（加工後）
+        newApp.logs = this.getProcessedlogs(logs);              // ログ（加工後）
+        newApp.comments = this.getProcessedComments(comments);  // コメント（加工後）
+        newApp.history = [...newApp.logs, ...newApp.comments].sort((a, b) => {
+          return new Date(a.timeStamp) - new Date(b.timeStamp);
+        });                                                     // 履歴・コメントの表示用
+        console.log(newApp)
+        return newApp;
+      },
+
+      // ワークフローセレクト用データ
+      applicantGroupSelectOptions() {
+        return this.loginUser.roles.map(role => {
+          return {
+            label: this.getGroupById(role.groupId).name,
+            value: role.groupId
+          }
+        });
+      },
+
+      // ステッパー用データ
+      stepperSteps() {
+        // stepsの取得。下書きの場合は選択した部署用のstepsを取得する
+        const steps = (() => {
+          if (this.pickedApp.status !== '下書き') {
+            return this.pickedApp.steps;
+          } else {
+            return this.selectedApplicantGroupId
+              ? this.getSteps(this.pickedApp.formId, this.selectedApplicantGroupId)
+              : []
+          }
+        })();
+        return steps.map((step, index) => {
+          const caption = (() => {
+            const groupName = this.getGroupById(step.groupId).name;  
+            const levelName = this.getLevelByValue(step.level).name;
+            const operatorName = (() => {
+              switch (step.operator) {
+                case '=': return '';
+                case '<': return '未満';
+                case '<=': return '以下';
+                case '>': return '超';
+                case '>=': return '以上';
+                case '<>': return '以外';
+              }
+            })();
+            return `${groupName}　${levelName}${operatorName}　${step.approversNum}名`;
+          })();
+          const {icon, color} = (() => {
+            // 完了済のステップ
+            if (index < this.pickedApp.currentStepIndex || this.pickedApp.status === '承認') return {icon: 'o_done', color: 'secondary'};
+            // 現在のステップ
+            if (index === this.pickedApp.currentStepIndex) {
+              switch (this.pickedApp.status) {
+                case 'レビュー中': return {icon: 'o_edit', color: 'primary'};
+                case '却下': return {icon: 'o_close', color: 'negative'};
+              }
+            }
+            // 後続のステップ
+            if (index > this.pickedApp.currentStepIndex) return {color: 'grey'};
+          })();
+          const logs = this.pickedApp.logs.filter(log => log.stepNum === step.num);      
+          return {...step, caption, icon, color, logs};
+        });
+      },
+    },
+
+    methods: {
+      getAppById(formId, responseId) {
+        return this.apps.find((app) => 
+          app.formId === formId &&
+          app.responseId === responseId
+        );
+      },
+      getApplicationIndexById(formId, responseId) {
+        return this.applications.findIndex((app) => 
+          app.formId === formId &&
+          app.responseId === responseId
+        );
+      },
+      /**
+       * レビュー対象の申請かどうかをtrue/falseで返す
+       */
+      isReviewableApp(app) {
+        if (app.status !== 'レビュー中') return false
+        return this.isReviewableStep(app.currentStep, app.logs);
+      },
+      /**
+       * レビュー対象のStepかどうかをtrue/falseで返す
+       */
+      isReviewableStep(step, logs) {
+        // 現在のStepでユーザーが承認済の場合は対象外
+        const loginUserApproved = logs.some(log => 
+          !log.revoked &&
+          log.action === 'approve' &&
+          log.stepNum === step.num &&
+          log.userEmail === this.loginUser.email
+        );
+        if (loginUserApproved) return false
+        // ログインユーザーのロールのうち、現在のStepと同一グループのロールを取得する
+        const userRole = this.loginUser.roles.find((role) => role.groupId === step.groupId)
+        // ユーザーが対象グループのロールを持つ、かつ、レビュー対象者のを持つ場合はTrue
+        return userRole
+          ? this.passedLevelCheck(step.operator, step.level, userRole.level)
+          : false
+      },
+      /**
+       * レビュー済の申請かどうかをtrue/falseで返す
+       */
+      isReviewedApp(app) {
+        if (app.status === '下書き') return false;
+        return app.logs.some(log => 
+          !log.revoked &&
+          log.userEmail === this.loginUser.email &&
+          ['approve','reject'].includes(log.action)
+        );
+      },
+      /**
+       * 事前閲覧対象の申請かどうかをtrue/falseで返す
+       */
+      isViewableApp(app) {
+        if (app.status === '下書き') return false;
+        // 現在のステップより後のステップで自分がレビュー対象になっているか
+        const nextSteps = app.steps.slice(app.currentStepIndex + 1);
+        return nextSteps.some(step => this.isReviewableStep(step, []))
+      },
+      /**
+       * 条件を満たすLevelであるかをtrue/falseで返す
+       */
+      passedLevelCheck(operator, requirements, level) {
+        switch (operator) {
+          case '=': return level === requirements;
+          case '<': return level < requirements;
+          case '<=': return level <= requirements;
+          case '>': return level > requirements;
+          case '>=': return level >= requirements;
+          case '<>': return level !== requirements;
+        }
+      },
+      /**
+       * 現在のステップを返す（下書き,承認済は-1を返す）
+       */
+      getCurrentStepIndex(steps, logs){
+        return steps.findIndex((step) => {
+          const approvalLogs = logs.filter(log => 
+            !log.revoked &&
+            log.action === 'approve' &&
+            log.stepNum === step.num &&
+            log.role.groupId === step.groupId &&
+            this.passedLevelCheck(step.operator, step.level, log.role.level)
+          );
+          return approvalLogs.length < step.approversNum;
+        });
+      },
+      /**
+       * ステータスに対応するカラーネームを返す
+       */ 
+      getStatusColor(status) {
+        switch(status) {
+          case '下書き': return 'grey'
+          case 'レビュー中': return 'light-blue'
+          case '承認': return 'green'
+          case '却下': return 'red'
+        }
+      },
+      /**
+       * ラジオボタン,チェックボックスの質問をフロント用に加工する
+       */
+      getProcessedDetails(details) {
+        return details.map((detail) => {
+          switch (detail.type) {
+            case 'radio':
+              return this.getRadioDetail(detail);
+            case 'checkbox':
+              return this.getCheckBoxDetail(detail);
+            default:
+              return detail;
+          }
+        });
+      },
+      /**
+       * チェックボックス式質問のデータを画面表示用に加工する
+       */
+      getCheckBoxDetail(detail) {
+        // options, responseを除いたオブジェクト newDetail を作成
+        const { options, response, ...newDetail } = detail;
+
+        if (detail.hasOtherOption) {  
+          if (detail.response.every((value) => detail.options.includes(value))) {
+            // 「その他」が選択されてない場合（全ての回答がoptions内に存在する場合）
+            newDetail.options = [...detail.options, 'その他'];
+            newDetail.response = [...detail.response];
+          } else {
+            // 「その他」が選択されている場合、末尾の回答と、最後の選択肢を"その他: <回答>"に修正する
+            const otherValue = `その他: ${detail.response.at(-1)}`;
+            newDetail.options = [...detail.options, otherValue];
+            newDetail.response = [...detail.response.slice(0, -1), otherValue];
+          }
+        } else {
+          // 「その他」が無効の質問の場合は、選択肢・回答を加工しない
+          newDetail.options = detail.options;
+          newDetail.response = detail.response;
+        }
+
+        // チェックボックスの選択状態をtrue,falseの配列で保持するモデルを作成
+        newDetail.model = newDetail.options.map(option => newDetail.response.includes(option))
+        return newDetail;
+      },
+      /**
+       * ラジオボタン式質問のデータを画面表示用に加工する
+       */
+      getRadioDetail(detail) {
+        // 「その他」が無効の質問の場合は加工しない
+        if (!detail.hasOtherOption) return detail;
+
+        // options, responseを除いたオブジェクト newDetail を作成
+        const { options, response, ...newDetail } = detail;
+
+        if (detail.options.includes(detail.response)) {
+          // 「その他」が選択されてない場合（回答がoptions内に存在する場合）
+          newDetail.options = [...detail.options, 'その他'];
+        } else {
+          // 「その他」が選択されている場合、回答と、最後の選択肢を"その他: <回答>"に修正する
+          const otherValue = `その他: ${detail.response}`;
+          newDetail.response = otherValue;
+          newDetail.options = [...detail.options, otherValue];
+        }
+        return newDetail;
+      },
+      /**
+       * コメントデータを画面表示用に加工する
+       */
+      getProcessedComments(comments){
+        return comments.map((comment) => {
+          const userName = this.getUserByEmail(comment.userEmail).name;
+          const timeStampString = this.getDateTimeString(new Date(comment.timeStamp));
+          return {...comment, userName, timeStampString}
+        });
+      },
+      /**
+       * ログデータを画面表示用に加工する
+       */
+      getProcessedlogs(logs){
+        return logs.map((log) => {
+          const actionName = (() => {
+            switch (log.action) {
+              case 'apply': return '申請';
+              case 'approve': return '承認';
+              case 'reject': return '却下';
+            }
+          })();
+          const userName = this.getUserByEmail(log.userEmail).name;
+          const timeStampString = this.getDateTimeString(new Date(log.timeStamp));
+          return {...log, actionName, userName, timeStampString}
+        });
+      },
+      /**
+       * フォームIDと所属グループを元に、承認stepを組み立てる
+       */
+      getSteps(formId, applicantGroupId) {
+        const form = this.getFormById(formId);
+        const steps = form.steps.reduce((acc, step) => {
+          // グループのstepへの参照が指定されている場合はgroupシートから取得
+          if (step.hasOwnProperty('ref')) {
+            const groupSteps = (step.ref === 'user-group')
+              ? this.getGroupSteps(applicantGroupId)    // 'user-group' => 所属グループのstepを取得
+              : this.getGroupSteps(step.ref)            // それ以外 => 指定したグループのstepを取得
+            return [...acc, ...groupSteps];
+          } else {
+            return [...acc, step];
+          }
+        }, []);
+        steps.forEach((step, index) => step.num = index);   // 連番付与
+        return steps;
+      },
+
+      /**
+       * グループ内の承認stepを組み立てる
+       */
+      getGroupSteps(groupId) {
+        const group = this.getGroupById(groupId);
+        const groupSteps = group.steps.reduce((acc, step) => {
+          if (step.hasOwnProperty('ref')) {
+            return [...acc, ...this.getGroupSteps(step.ref)]
+          } else {
+            return [...acc, step]
+          }
+        }, []);
+        return groupSteps;
+      },
+
+      /**
+       * フォームIDからフォームを取得する
+       */
+      getFormById(formId) {
+        return this.forms.find((form) => form.id === formId);
+      },
+      /**
+       * グループIDからグループを取得する
+       */
+      getGroupById(groupId) {
+        return this.groups.find((group) => group.id === groupId);
+      },
+      /**
+       * レベルの数値からレベル情報を取得する
+       */
+      getLevelByValue(value) {
+        return this.levels.find((level) => level.value === value);
+      },
+
+      /**
+       * 申請内容の詳細からキャプションを作成する
+       */
+      getCaption(details) {
+        return details.reduce((acc, detail) => {
+          return detail.type !== 'file'
+            ? `${acc}${detail.title}:${detail.response}　`
+            : acc
+        }, '');
+      },
+      /**
+       * メールアドレスからユーザー情報を取得する
+       */
+      getUserByEmail(email) {
+        return this.users.find((user) => user.email === email);
+      },
+      /**
+       * Dateを yyyy年m月d日(曜) hh時mm分 に変換する
+       */
+      getDateTimeString(d) {
+        const year = d.getFullYear();
+        const month = d.getMonth() + 1;
+        const date = d.getDate();
+        const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土' ][d.getDay()];
+        const hours = ('0' + d.getHours()).slice(-2);
+        const minutes = ('0' + d.getMinutes()).slice(-2);
+        return `${year}年${month}月${date}日(${dayOfWeek}) ${hours}時${minutes}分`
+      },
+      handleClickFormListItem(index) {
+        this.pickedForm = index;
+        this.dialogs.goForm = true;
+      },
+      handleClickAppListItem(formId, responseId) {
+        this.switchPage('appDetails', { menu: this.params.menu, app_fid: formId, app_rid: responseId }, true);
+      },
+      /**
+       * 申請ボタンクリック時の処理（サーバー通信）
+       */
+      handleClickApply(formId, responseId, applicantGroupId) {
+        const toast = Quasar.Notify.create({
+          type: 'ongoing',
+          message: '申請処理中 ...',
+          position: 'bottom-right'
+        })
+        google.script.run.withSuccessHandler((result) => {
+          this.applications[this.getApplicationIndexById(formId, responseId)] = JSON.parse(result);
+          toast({
+            type: 'positive',
+            message: '申請処理が完了しました',
+            position: 'bottom-right',
+            timeout: 1000
+          })
+        }).withFailureHandler((error) => {
+          toast({
+            type: 'negative',
+            message: '申請処理でエラーが発生しました',
+            caption: error.message,
+            timeout: 1000
+          })
+        }).apply(formId, responseId, applicantGroupId);
+      },
+      /**
+       * 承認ボタンクリック時の処理（サーバー通信）
+       */
+      handleClickApprove(formId, responseId) {
+        const toast = Quasar.Notify.create({
+          type: 'ongoing',
+          message: '承認処理中 ...',
+          position: 'bottom-right'
+        })
+        google.script.run.withSuccessHandler((result) => {
+          this.applications[this.getApplicationIndexById(formId, responseId)] = JSON.parse(result);
+          toast({
+            type: 'positive',
+            message: '承認処理が完了しました',
+            position: 'bottom-right',
+            timeout: 1000
+          })
+        }).withFailureHandler((error) => {
+          toast({
+            type: 'negative',
+            message: '承認処理でエラーが発生しました',
+            caption: error.message,
+            timeout: 1000
+          })
+        }).approve(formId, responseId);
+      },
+      /**
+       * 却下ボタンクリック時の処理（サーバー通信）
+       */
+      handleClickReject(formId, responseId) {
+        const toast = Quasar.Notify.create({
+          type: 'ongoing',
+          message: '却下処理中 ...',
+          position: 'bottom-right'
+        })
+        google.script.run.withSuccessHandler((result) => {
+          this.applications[this.getApplicationIndexById(formId, responseId)] = JSON.parse(result);
+          toast({
+            type: 'positive',
+            message: '却下処理が完了しました',
+            position: 'bottom-right',
+            timeout: 1000
+          })
+        }).withFailureHandler((error) => {
+          toast({
+            type: 'negative',
+            message: '却下処理でエラーが発生しました',
+            caption: error.message,
+            timeout: 1000
+          })
+        }).reject(formId, responseId);
+      },      
+      /**
+       * コメント送信ボタンクリック時の処理（サーバー通信）
+       */
+      handleClickSubmitComment(formId, responseId, message) {
+        const comment = { userEmail: this.loginUser.email, message: message, timeStamp: new Date() };
+        this.applications[this.getApplicationIndexById(formId, responseId)].comments.push(comment);
+        google.script.run.withFailureHandler((error) => {
+          console.log(error);
+          // TO DO エラーメッセージ
+        }).submitComment(formId, responseId, message);
+        this.inputComment = '';
+      },
+      /**
+       * ページ切り替え処理
+       */
+      switchPage(pageName, params, addHistory) {        
+        // ページを切り替える
+        this.page = (() => {
+          if (!pageName) return 'apply';
+          return this.pageNames.includes(pageName) ? pageName : 'error';
+        })();
+
+        // パラメータを反映する
+        if (params) {
+          Object.keys(params).forEach(key => {
+            if (this.params.hasOwnProperty(key)) {
+              this.params[key] = params[key];
+            }
+          });
+        }
+
+        // 初期表示・ブラウザバック・フォワード以外の場合はブラウザの履歴に追加
+        if (addHistory) google.script.history.push(null, params, pageName);
+      },
+    },
+  })
+
+  app.use(Quasar)
+  Quasar.lang.set(Quasar.lang.ja)
+  Quasar.iconSet.set(Quasar.iconSet.materialIconsOutlined)
+  app.mount('#q-app')
+</script>

@@ -1,0 +1,169 @@
+<div class="text-h4 q-mb-lg">申請</div>
+<q-card flat bordered>
+  <q-tabs
+    v-model="params.tab_apply"
+    class="text-grey"
+    active-color="primary"
+    indicator-color="primary"
+    align="justify"
+    narrow-indicator
+  >
+    <q-tab name="new" label="新規申請"></q-tab>
+    <q-tab name="drafts" label="下書き"></q-tab>
+    <q-tab name="applied" label="申請済み"></q-tab>
+  </q-tabs>
+
+  <q-separator></q-separator>
+
+  <q-tab-panels v-model="params.tab_apply" animated class="q-pa-lg">
+    <q-tab-panel name="new">
+      <div class="text-h5">新規申請</div>
+
+      <template v-if="loading">
+        <q-item v-for="n in 5" class="q-pa-md">
+          <q-item-section>
+            <q-item-label>
+              <q-skeleton type="text"></q-skeleton>
+            </q-item-label>
+            <q-item-label caption>
+              <q-skeleton type="text" width="65%"></q-skeleton>
+              <q-skeleton type="text" width="65%"></q-skeleton>
+            </q-item-label>
+          </q-item-section>
+        </q-item>        
+      </template>
+
+      <template v-else>
+        <div v-if="!forms.length" class="text-center">
+          <q-icon name="o_error_outline" color="grey-4" size="150px"></q-icon>
+          <p class="text-grey">フォームがありません</p>
+        </div>      
+        
+        <div v-else>
+          <q-list separator class="q-pa-md">
+            <template v-for="(form, index) in forms">
+              <q-item clickable v-ripple @click="handleClickFormListItem(index)">
+                <q-item-section>
+                  <q-item-label>{{ form.title }}</q-item-label>
+                  <q-item-label caption>{{ form.description }}</q-item-label>
+                </q-item-section>
+                <q-item-section side top>
+                  <div class="q-gutter-xs" style="max-width: 10rem">
+                    <q-badge color="teal" :label="tag" v-for="tag in form.tags"></q-badge>
+                  </div>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-list>
+        </div>
+      </template>
+    </q-tab-panel>
+
+    <q-tab-panel name="drafts">
+      <div class="text-h5">下書き</div>
+
+      <template v-if="loading">
+        <q-item v-for="n in 5" class="q-pa-md">
+          <q-item-section>
+            <q-item-label>
+              <q-skeleton type="text"></q-skeleton>
+            </q-item-label>
+            <q-item-label caption>
+              <q-skeleton type="text" width="65%"></q-skeleton>
+              <q-skeleton type="text" width="65%"></q-skeleton>
+            </q-item-label>
+          </q-item-section>
+        </q-item>        
+      </template>
+
+      <template v-else>
+        <div v-if="!draftApps.length" class="text-center">
+          <q-icon name="o_folder_off" color="grey-4" size="150px"></q-icon>
+          <p class="text-grey">下書きがありません</p>
+        </div>      
+
+        <div v-else>
+          <q-list separator class="q-pa-md">        
+            <template v-for="app in draftApps">
+              <q-item clickable v-ripple @click="handleClickAppListItem(app.formId, app.responseId)">
+                <q-item-section>
+                  <q-item-label>{{ app.title }}</q-item-label>
+                  <q-item-label caption>{{ app.applicantName }}</q-item-label>
+                  <q-item-label caption lines="1">{{ app.caption }}</q-item-label>
+                </q-item-section>
+                <q-item-section side top>
+                  <q-badge color="teal" :label="app.formTitle"></q-badge>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-list>
+        </div>
+      </template>
+    </q-tab-panel>
+
+    <q-tab-panel name="applied">
+      <div class="text-h5">申請済み</div>
+
+      <template v-if="loading">
+        <q-item v-for="n in 5" class="q-pa-md">
+          <q-item-section>
+            <q-item-label>
+              <q-skeleton type="text"></q-skeleton>
+            </q-item-label>
+            <q-item-label caption>
+              <q-skeleton type="text" width="65%"></q-skeleton>
+              <q-skeleton type="text" width="65%"></q-skeleton>
+            </q-item-label>
+          </q-item-section>
+        </q-item>        
+      </template>
+
+      <template v-else>
+        <div v-if="!inReviewApps.length" class="text-center">
+          <q-icon name="o_folder_off" color="grey-4" size="150px"></q-icon>
+          <p class="text-grey">提出済の申請がありません</p>
+        </div>      
+
+        <div v-else>
+          <q-list separator class="q-pa-md">
+            <template v-for="app in inReviewApps">
+              <q-item clickable v-ripple @click="handleClickAppListItem(app.formId, app.responseId)">
+                <q-item-section>
+                  <q-item-label>{{ app.title }}</q-item-label>
+                  <q-item-label caption>{{ app.applicantName }}（{{ app.applicantGroupName }}） {{ app.applyDateTimeString }}</q-item-label>
+                  <q-item-label caption lines="1">{{ app.caption }}</q-item-label>
+                </q-item-section>
+                <q-item-section side top>
+                  <q-badge color="teal" :label="app.formTitle"></q-badge>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-list>
+        </div>
+      </template>
+    </q-tab-panel>
+  </q-tab-panels>
+</q-card>
+
+
+<q-dialog v-model="dialogs.goForm">
+  <q-card style="width: 500px; max-width: 90vw;">
+    <q-card-section>
+      <div class="text-h6">下書きを作成</div>
+    </q-card-section>
+    <q-card-section class="q-pt-none">
+      新規申請画面（Googleフォーム）に遷移します。<br />
+      フォームの送信後は、「申請」メニューの「下書き」から、ワークフローを開始してください。
+    </q-card-section>
+    <q-card-actions align="right">
+      <q-btn flat label="キャンセル" color="grey" v-close-popup></q-btn>
+      <q-btn 
+        flat label="フォームを開く"
+        color="primary"
+        v-close-popup
+        :href="forms[pickedForm].url"
+      >
+      </q-btn>
+    </q-card-actions>
+  </q-card>
+</q-dialog>

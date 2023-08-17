@@ -1,0 +1,292 @@
+<div class="text-h4 q-mb-lg">申請内容</div>
+<q-card flat bordered>
+  <q-card-section>
+    <div class="text-h5">
+      {{ pickedApp.title }}
+      <q-badge align="top" :color="pickedApp.statusColor">{{ pickedApp.status }}</q-badge>
+    </div>
+    <div class="text-subtitle">by {{ pickedApp.applicantName }}</div>
+  </q-card-section>
+
+  <q-tabs
+    v-model="params.tab_appDetails"
+    class="text-grey"
+    active-color="primary"
+    indicator-color="primary"
+    align="justify"
+    narrow-indicator
+  >              
+    <q-tab label="申請内容" name="contents"></q-tab>
+    <q-tab label="ワークフロー" name="workflow"></q-tab>
+    <q-tab label="履歴・コメント" name="history"></q-tab>
+  </q-tabs>
+
+  <q-separator></q-separator>
+
+  <q-tab-panels v-model="params.tab_appDetails" animated class="q-pa-lg">
+    <q-tab-panel name="contents">
+      <q-card-section v-for="detail in pickedApp.details">
+        <div>{{ detail.title }}</div>
+
+        <div v-if="detail.type === 'text'">
+          <q-input v-model="detail.response" disable autogrow></q-input>
+        </div>
+
+        <div v-if="detail.type === 'radio'">
+          <q-radio
+            v-for="option in detail.options"
+            v-model="detail.response"
+            :val="option"
+            :label="option"
+            class="q-mr-md"
+            disable
+          ></q-radio>
+        </div>
+
+        <div v-if="detail.type === 'checkbox'">
+          <q-checkbox
+            v-for="(option, index) in detail.options"
+            v-model="detail.model[index]"
+            :label="option"
+            class="q-mr-md"
+            disable
+          ></q-checkbox>
+          
+        </div>
+
+        <div v-if="detail.type === 'select'">
+          <q-select
+            v-model="detail.response"
+            :options="detail.options"
+            class="q-mt-sm"
+            style="max-width: 300px"
+            outlined
+            dense
+            disable
+          ></q-select>
+        </div>
+
+        <div v-if="detail.type === 'file'">
+          <q-list bordered class="q-mt-sm q-py-sm rounded-borders">
+            <q-item
+              v-for="file of detail.response" 
+              :href="'https://drive.google.com/file/d/' + file.id +'/view?usp=sharing'"
+              target="_blank"
+              dense
+              clickable
+              v-ripple
+            >
+              <q-item-section avatar style="min-width: 36px;">
+                <q-icon name="o_attach_file" color="grey"></q-icon>
+                <!-- <q-avatar size="md" text-color="grey" icon="o_attach_file"></q-avatar> -->
+              </q-item-section>
+              <q-item-section>{{ file.name }}</q-item-section>
+            </q-item>
+
+            <q-item v-if="!detail.response.length" dense disable>
+              <q-item-section>ファイルなし</q-item-section>
+            </q-item>
+          </q-list>
+        </div>
+      </q-card-section>
+      <q-card-section>
+        <div class="row justify-center">
+          <q-btn
+            v-if="pickedApp.status === '下書き'"
+            unelevated
+            class="q-mx-md"
+            color="primary"
+            icon="o_edit"
+            label="修正"
+            :href="pickedApp.editUrl"
+          ></q-btn>
+        </div>
+      </q-card-section>
+    </q-tab-panel>
+
+    <q-tab-panel name="workflow">
+      <q-card-section>
+        <q-select
+          v-if="pickedApp.status === '下書き'"
+          v-model="selectedApplicantGroupId"
+          :options="applicantGroupSelectOptions"
+          label="グループ選択"
+          class="q-mx-auto q-mb-md"
+          style="max-width: 300px"
+          emit-value
+          map-options
+        >
+        </q-select>
+
+        <div v-if="pickedApp.status === '下書き' && !selectedApplicantGroupId" class="text-center">
+          <q-icon name="o_add_road" color="grey-4" size="150px"></q-icon>
+          <p class="text-grey">ワークフローグループを選択してください。</p>
+        </div>
+        <div v-else class="q-px-lg q-py-md">
+          <q-timeline>
+            <q-timeline-entry
+              title="申請者"
+              subtitle="STEP 1"
+              :icon="pickedApp.status === '下書き' ? 'o_edit' : 'o_done'"
+              :color="pickedApp.status === '下書き' ? 'primary' : 'secondary'"
+            >
+              <div class="q-ml-md">
+                <div v-for="log in pickedApp.logs.filter(log => log.action === 'apply')">
+                  <q-badge color="secondary" class="q-mr-sm">申請</q-badge>
+                  {{ log.userName }}　{{ log.timeStampString }}
+                </div>
+              </div>
+            </q-timeline-entry>
+            <q-timeline-entry
+              v-for="(step, index) in stepperSteps"
+              :title="step.caption"
+              :subtitle="`STEP ${index + 2}`"
+              :icon="step.icon"
+              :color="step.color"
+            >
+              <div class="q-ml-md">
+                <div v-for="log in step.logs">
+                  <q-badge v-if="log.action === 'approve'" color="secondary" class="q-mr-sm">承認</q-badge>
+                  <q-badge v-else-if="log.action === 'reject'" color="negative" class="q-mr-sm">却下</q-badge>
+                  {{ log.userName }}　{{ log.timeStampString }}
+                </div>
+              </div>
+            </q-timeline-entry>
+          </q-timeline>
+        </div>
+      </q-card-section>
+      
+      <q-card-section>
+        <div class="row justify-center">
+          <q-btn
+            v-if="pickedApp.status === '下書き'"
+            :disable="!selectedApplicantGroupId"
+            unelevated
+            class="q-mx-md"
+            color="primary"
+            icon="o_send"
+            label="申請"
+            @click="dialogs.apply = true"
+          ></q-btn>
+          <q-btn
+            v-if="pickedApp.status === 'レビュー中' && pickedApp.reviewable"
+            unelevated
+            class="q-mx-md"
+            color="negative"
+            icon="o_cancel"
+            label="却下"
+            @click="dialogs.reject = true"
+          ></q-btn>
+          <q-btn
+            v-if="pickedApp.status === 'レビュー中' && pickedApp.reviewable"
+            unelevated
+            class="q-mx-md"
+            color="secondary"
+            icon="o_check_circle"
+            label="承認"
+            @click="dialogs.approve = true"
+          ></q-btn>
+        </div>
+      </q-card-section>
+    </q-tab-panel>
+
+    <q-tab-panel name="history">        
+      <div v-if="!pickedApp.history.length" class="text-center">
+        <q-icon name="o_speaker_notes_off" color="grey-4" size="150px"></q-icon>
+        <p class="text-grey">履歴・コメントはありません</p>
+      </div>
+
+      <template v-for="item in pickedApp.history">
+        <div v-if="item.hasOwnProperty('action')" class="text-center text-grey q-my-lg">
+          {{ item.timeStampString }} {{ item.userName }}さんが{{ item.actionName }}しました
+        </div>
+        <div v-else class="q-mb-lg">
+          <q-chat-message
+            :name="item.userName"
+            :text="[item.message]"
+            :sent="item.userEmail === loginUser.email"
+            :stamp="item.timeStampString"
+          ></q-chat-message>
+        </div>
+      </template>
+      <q-input
+        v-model="inputComment"
+        label="コメント"
+        filled
+      >
+        <template v-slot:after>
+          <q-btn
+            round dense flat icon="o_send"
+            @click="handleClickSubmitComment(pickedApp.formId, pickedApp.responseId, inputComment)"
+          ></q-btn>
+        </template>
+      </q-input>
+    </q-tab-panel>
+  </q-tab-panels>
+</q-card>
+
+<q-dialog v-model="dialogs.apply">
+  <q-card style="width: 500px; max-width: 90vw;">
+    <q-card-section>
+      <div class="text-h6">申請</div>
+    </q-card-section>
+    <q-card-section class="q-pt-none">
+      申請します。よろしいですか？
+    </q-card-section>
+    <q-card-actions align="right">
+      <q-btn flat label="キャンセル" color="grey" v-close-popup></q-btn>
+      <q-btn 
+        flat
+        label="申請する"
+        color="primary"
+        v-close-popup
+        @click="handleClickApply(pickedApp.formId, pickedApp.responseId, selectedApplicantGroupId)"
+      >
+      </q-btn>
+    </q-card-actions>
+  </q-card>
+</q-dialog>
+
+<q-dialog v-model="dialogs.reject">
+  <q-card style="width: 500px; max-width: 90vw;">
+    <q-card-section>
+      <div class="text-h6">却下</div>
+    </q-card-section>
+    <q-card-section class="q-pt-none">
+      却下します。よろしいですか？
+    </q-card-section>
+    <q-card-actions align="right">
+      <q-btn flat label="キャンセル" color="grey" v-close-popup></q-btn>
+      <q-btn 
+        flat
+        label="却下する"
+        color="negative"
+        v-close-popup
+        @click="handleClickReject(pickedApp.formId, pickedApp.responseId)"
+      >
+      </q-btn>
+    </q-card-actions>
+  </q-card>
+</q-dialog>
+
+<q-dialog v-model="dialogs.approve">
+  <q-card style="width: 500px; max-width: 90vw;">
+    <q-card-section>
+      <div class="text-h6">承認</div>
+    </q-card-section>
+    <q-card-section class="q-pt-none">
+      承認します。よろしいですか？
+    </q-card-section>
+    <q-card-actions align="right">
+      <q-btn flat label="キャンセル" color="grey" v-close-popup></q-btn>
+      <q-btn 
+        flat
+        label="承認する"
+        color="secondary"
+        v-close-popup
+        @click="handleClickApprove(pickedApp.formId, pickedApp.responseId)"
+      >
+      </q-btn>
+    </q-card-actions>
+  </q-card>
+</q-dialog>

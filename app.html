@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>  
+  <head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css?family=Material+Icons+Outlined" rel="stylesheet" type="text/css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP&display=swap" rel="stylesheet">        
+    <link href="https://cdn.jsdelivr.net/npm/quasar@2.11.10/dist/quasar.prod.css" rel="stylesheet" type="text/css">
+    <style>
+      .drawer-item {
+        width: 92%;
+        padding-left: 20px;
+        border-radius: 0 28px 28px 0;
+      }
+      .active-drawer-item {
+        background-color: #e8f0fe;
+        color: #1967d2;
+        padding-left: 15px;
+        border-left: solid #1967d2 5px;
+      }
+      .q-timeline__title { font-size: 14px; }
+      .q-timeline__subtitle { margin-bottom: 0; }
+    </style>
+  </head>
+
+  <body style="font-family: 'Noto Sans JP', sans-serif;">
+    <div id="q-app">
+      <q-layout view="lHh Lpr lff" class="bg-grey-1">
+        <?!= HtmlService.createHtmlOutputFromFile("drawer").getContent(); ?>
+
+        <q-page-container>
+          <div class="q-px-xl q-py-lg" style="max-width: 800px">
+            <q-page v-if="page === 'apply'">
+              <?!= HtmlService.createHtmlOutputFromFile("apply").getContent(); ?>
+            </q-page>
+            <q-page v-if="page === 'review'">
+              <?!= HtmlService.createHtmlOutputFromFile("review").getContent(); ?>
+            </q-page>
+            <q-page v-if="page === 'appDetails'">
+              <?!= HtmlService.createHtmlOutputFromFile("appDetails").getContent(); ?>
+            </q-page>
+          </div>
+        </q-page-container>
+    
+      </q-layout>
+    </div>    
+    <?!= HtmlService.createTemplateFromFile("scripts").evaluate().getContent(); ?>
+  </body>
+</html>
